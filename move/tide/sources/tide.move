@@ -1,6 +1,6 @@
 /*
-/// Module: hello_world
-module hello_world::hello_world;
+/// Module: tide
+module tide::tide;
 */
 
 // For Move coding conventions, see
