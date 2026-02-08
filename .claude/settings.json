@@ -3,5 +3,22 @@
     "sui-stack-dev@sui-stack-plugins": true,
     "frontend-design@claude-plugins-official": true,
     "context7@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": []
+  },
+  "hooks": {
+    "PostToolUse": [],
+    "PreToolUse": [],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/save-conversation.py"
+          }
+        ]
+      }
+    ]
   }
 }
