@@ -421,11 +421,12 @@ fun test_settle_draw() {
         assert!(market::round_result(r1).destroy_some() == 2); // RESULT_DRAW
         assert!(market::round_prize_pool(r1) == 0);
 
-        // Treasury should have fee - settler_reward
-        // settler_reward = 2_000_000_000 * 200 / 10000 = 40_000_000
-        // treasury_fee = 2_000_000_000 - 40_000_000 = 1_960_000_000
+        // settler_reward based on normal_fee (not total):
+        // normal_fee = 2_000_000_000 * 200 / 10000 = 40_000_000
+        // settler_reward = 40_000_000 * 200 / 10000 = 800_000
+        // treasury = total - settler_reward = 2_000_000_000 - 800_000 = 1_999_200_000
         let registry = scenario.take_shared<Registry>();
-        assert!(registry.treasury_value() == 1_960_000_000);
+        assert!(registry.treasury_value() == 1_999_200_000);
         ts::return_shared(registry);
         ts::return_shared(market);
     };
@@ -880,11 +881,11 @@ fun test_withdraw_treasury_after_settle() {
     {
         let admin_cap = scenario.take_from_sender<AdminCap>();
         let mut registry = scenario.take_shared<Registry>();
-        assert!(registry.treasury_value() == 1_960_000_000);
+        assert!(registry.treasury_value() == 1_999_200_000);
 
         let coin = registry::withdraw_treasury(&admin_cap, &mut registry, ONE_SUI, scenario.ctx());
         assert!(coin.value() == ONE_SUI);
-        assert!(registry.treasury_value() == 960_000_000);
+        assert!(registry.treasury_value() == 999_200_000);
 
         transfer::public_transfer(coin, ADMIN);
         ts::return_to_sender(&scenario, admin_cap);
@@ -948,5 +949,59 @@ fun test_full_lifecycle() {
         ts::return_shared(registry);
     };
 
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = 116, location = tide::market)]
+fun test_create_market_min_bet_too_small() {
+    let mut scenario = ts::begin(ADMIN);
+    {
+        registry::init_for_testing(scenario.ctx());
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let admin_cap = scenario.take_from_sender<AdminCap>();
+        let mut registry = scenario.take_shared<Registry>();
+        let clock = clock::create_for_testing(scenario.ctx());
+        // min_bet = 99_999 < MIN_BET_MIST (100_000)
+        market::create_market(
+            &admin_cap,
+            &mut registry,
+            FEED_ID,
+            INTERVAL_MS,
+            99_999,
+            START_TIME_MS,
+            &clock,
+            scenario.ctx(),
+        );
+        clock.destroy_for_testing();
+        ts::return_to_sender(&scenario, admin_cap);
+        ts::return_shared(registry);
+    };
+    scenario.end();
+}
+
+#[test]
+fun test_settler_reward_consistent_in_draw() {
+    // Verify settler_reward in DRAW is same as normal (based on normal_fee, not actual fee)
+    let mut scenario = setup();
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);
+
+    settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+
+    // DRAW: fee = total = 2e9, but settler_reward based on normal_fee
+    let r2_start = START_TIME_MS + INTERVAL_MS;
+    settle_helper(&mut scenario, SETTLER, 100, r2_start);
+
+    // normal_fee = 2e9 * 200/10000 = 40_000_000
+    // settler_reward = 40_000_000 * 200/10000 = 800_000
+    scenario.next_tx(SETTLER);
+    {
+        let coin = scenario.take_from_sender<sui::coin::Coin<SUI>>();
+        assert!(coin.value() == 800_000);
+        transfer::public_transfer(coin, SETTLER);
+    };
     scenario.end();
 }

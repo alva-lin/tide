@@ -33,6 +33,7 @@ const EStartTimeTooEarly: u64 = 112;
 const EUpcomingRoundExists: u64 = 113;
 const EExponentMismatch: u64 = 114;
 const ECurrentTimeTooEarly: u64 = 115;
+const EInvalidMinBet: u64 = 116;
 
 
 // === Status Constants ===
@@ -53,6 +54,7 @@ const RESULT_DOWN: u8 = 1;
 const RESULT_DRAW: u8 = 2;
 
 const BPS_BASE: u64 = 10_000;
+const MIN_BET_MIST: u64 = 100_000;
 
 // === Structs ===
 
@@ -101,6 +103,7 @@ public fun create_market(
     ctx: &mut TxContext,
 ) {
     assert!(interval_ms > 0, EInvalidInterval);
+    assert!(min_bet >= MIN_BET_MIST, EInvalidMinBet);
     assert!(start_time_ms >= clock.timestamp_ms() + interval_ms, EStartTimeTooEarly);
 
     let mut market = Market {
@@ -375,16 +378,18 @@ fun settle_and_advance_internal(
             0
         };
 
+        let normal_fee = (((total as u128) * (registry.fee_bps() as u128) / (BPS_BASE as u128)) as u64);
         let fee = if (winning_total == 0) {
             total
         } else {
-            (((total as u128) * (registry.fee_bps() as u128) / (BPS_BASE as u128)) as u64)
+            normal_fee
         };
 
         if (fee > 0) {
             let mut fee_balance = live_round.pool.split(fee);
 
-            let settler_reward = (((fee as u128) * (registry.settler_reward_bps() as u128) / (BPS_BASE as u128)) as u64);
+            // settler_reward always based on normal_fee to prevent amplification in DRAW/all-lose scenarios
+            let settler_reward = (((normal_fee as u128) * (registry.settler_reward_bps() as u128) / (BPS_BASE as u128)) as u64);
             if (settler_reward > 0) {
                 settler_reward_total = settler_reward;
                 let reward_balance = fee_balance.split(settler_reward);

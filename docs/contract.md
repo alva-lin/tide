@@ -20,7 +20,7 @@ Market (shared, 每个市场独立)
 ├── id: UID
 ├── pyth_feed_id: vector<u8>
 ├── interval_ms: u64 (300_000 = 5min)
-├── min_bet: u64                             ← 最低投注额
+├── min_bet: u64                             ← 最低投注额（≥ 100_000 MIST）
 ├── status: ACTIVE | PAUSED                  ← 市场开关
 ├── round_count: u64
 ├── current_round: u64                      ← LIVE 轮次序号（0 = 无）
@@ -171,7 +171,8 @@ create_market                首次 settle
   ├─▶ 计算 fee, reward 和 prize_pool:
   │     total = up_amount + down_amount
   │     fee = winning_total == 0 ? total : total × fee_bps / 10000
-  │     settler_reward = fee × settler_reward_bps / 10000
+  │     normal_fee = total × fee_bps / 10000
+  │     settler_reward = normal_fee × settler_reward_bps / 10000  ← 始终基于 normal_fee，防止 DRAW 时激励放大
   │     treasury_fee = fee - settler_reward
   │     从 Round.pool 取出 fee:
   │       settler_reward → 调用者 (ctx.sender)
