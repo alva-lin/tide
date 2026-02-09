@@ -1005,3 +1005,55 @@ fun test_settler_reward_consistent_in_draw() {
     };
     scenario.end();
 }
+
+#[test, expected_failure(abort_code = 203, location = tide::bet)]
+fun test_redeem_ticket_market_mismatch() {
+    let mut scenario = setup();
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+
+    // Create a second market
+    scenario.next_tx(ADMIN);
+    {
+        let admin_cap = scenario.take_from_sender<AdminCap>();
+        let mut registry = scenario.take_shared<Registry>();
+        let clock = clock::create_for_testing(scenario.ctx());
+        market::create_market(
+            &admin_cap,
+            &mut registry,
+            FEED_ID,
+            INTERVAL_MS,
+            MIN_BET,
+            START_TIME_MS,
+            &clock,
+            scenario.ctx(),
+        );
+        clock.destroy_for_testing();
+        ts::return_to_sender(&scenario, admin_cap);
+        ts::return_shared(registry);
+    };
+
+    // Settle first market so ticket becomes redeemable
+    settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
+    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI);
+    let r2_start = START_TIME_MS + INTERVAL_MS;
+    settle_helper(&mut scenario, SETTLER, 150, r2_start);
+
+    // Alice redeems her ticket (from market 1) against market 2
+    scenario.next_tx(ALICE);
+    {
+        let mut market1 = scenario.take_shared<Market>();
+        let mut market2 = scenario.take_shared<Market>();
+        let ticket = scenario.take_from_sender<Ticket>();
+
+        let ticket_mid = bet::ticket_market_id(&ticket);
+        if (ticket_mid == object::id(&market1)) {
+            bet::redeem(&mut market2, ticket, scenario.ctx());
+        } else {
+            bet::redeem(&mut market1, ticket, scenario.ctx());
+        };
+
+        ts::return_shared(market1);
+        ts::return_shared(market2);
+    };
+    scenario.end();
+}
