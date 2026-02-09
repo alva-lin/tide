@@ -19,7 +19,6 @@ Registry (shared, singleton)
 ```
 Market (shared, 每个市场独立)
 ├── id: UID
-├── registry_id: ID                          ← 关联 Registry
 ├── pyth_feed_id: vector<u8>
 ├── interval_ms: u64 (300_000 = 5min)
 ├── status: ACTIVE | PAUSED                  ← 市场开关
