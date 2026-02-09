@@ -430,9 +430,11 @@ fun test_settle_draw() {
         assert!(market::round_result(r1).destroy_some() == 2); // RESULT_DRAW
         assert!(market::round_prize_pool(r1) == 0); // all fee
 
-        // Treasury gets entire pool (minus settler reward = 0 since no winners)
+        // Treasury should have fee - settler_reward
+        // settler_reward = 2_000_000_000 * 200 / 10000 = 40_000_000
+        // treasury_fee = 2_000_000_000 - 40_000_000 = 1_960_000_000
         let registry = scenario.take_shared<Registry>();
-        assert!(registry.treasury_value() == 2 * ONE_SUI);
+        assert!(registry.treasury_value() == 1_960_000_000);
         ts::return_shared(registry);
         ts::return_shared(market);
     };
@@ -947,11 +949,11 @@ fun test_withdraw_treasury_after_settle() {
     {
         let admin_cap = scenario.take_from_sender<AdminCap>();
         let mut registry = scenario.take_shared<Registry>();
-        assert!(registry.treasury_value() == 2 * ONE_SUI);
+        assert!(registry.treasury_value() == 1_960_000_000);
 
         let coin = registry::withdraw_treasury(&admin_cap, &mut registry, ONE_SUI, scenario.ctx());
         assert!(coin.value() == ONE_SUI);
-        assert!(registry.treasury_value() == ONE_SUI);
+        assert!(registry.treasury_value() == 960_000_000);
 
         transfer::public_transfer(coin, ADMIN);
         ts::return_to_sender(&scenario, admin_cap);

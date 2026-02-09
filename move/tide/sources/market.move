@@ -430,16 +430,14 @@ fun settle_and_advance_internal(
         if (fee > 0) {
             let mut fee_balance = live_round.pool.split(fee);
 
-            if (winning_total > 0) {
-                let settler_reward = fee * registry.settler_reward_bps() / BPS_BASE;
-                if (settler_reward > 0) {
-                    settler_reward_total = settler_reward;
-                    let reward_balance = fee_balance.split(settler_reward);
-                    transfer::public_transfer(
-                        coin::from_balance(reward_balance, ctx),
-                        ctx.sender(),
-                    );
-                };
+            let settler_reward = fee * registry.settler_reward_bps() / BPS_BASE;
+            if (settler_reward > 0) {
+                settler_reward_total = settler_reward;
+                let reward_balance = fee_balance.split(settler_reward);
+                transfer::public_transfer(
+                    coin::from_balance(reward_balance, ctx),
+                    ctx.sender(),
+                );
             };
 
             registry.deposit_treasury(fee_balance);
