@@ -1,9 +1,7 @@
 [package]
 name = "tide"
 edition = "2024"
-
-[dependencies]
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet", override = true }
+authors = ["Alva Lin (alva2lin@yuheng.site)"]
 
 [dependencies.Pyth]
 git = "https://github.com/pyth-network/pyth-crosschain.git"

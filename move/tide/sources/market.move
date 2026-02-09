@@ -1,4 +1,3 @@
-#[allow(lint(self_transfer))]
 module tide::market;
 
 use sui::sui::SUI;
@@ -316,6 +315,7 @@ fun create_round(start_time_ms: u64, round_number: u64): Round {
     }
 }
 
+#[allow(lint(self_transfer))]
 fun settle_and_advance_internal(
     registry: &mut Registry,
     market: &mut Market,

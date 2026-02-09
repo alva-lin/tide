@@ -1,4 +1,3 @@
-#[allow(lint(self_transfer))]
 module tide::bet;
 
 use sui::sui::SUI;
@@ -65,6 +64,7 @@ public fun place_bet(
 
 // === Redeem ===
 
+#[allow(lint(self_transfer))]
 public fun redeem(
     market: &mut Market,
     ticket: Ticket,
