@@ -8,7 +8,6 @@ use sui::event;
 public struct RegistryConfigUpdated has copy, drop {
     fee_bps: u64,
     settler_reward_bps: u64,
-    min_bet: u64,
     price_tolerance_ms: u64,
 }
 
@@ -90,10 +89,9 @@ const OUTCOME_CANCEL: u8 = 2;
 public(package) fun emit_registry_config_updated(
     fee_bps: u64,
     settler_reward_bps: u64,
-    min_bet: u64,
     price_tolerance_ms: u64,
 ) {
-    event::emit(RegistryConfigUpdated { fee_bps, settler_reward_bps, min_bet, price_tolerance_ms });
+    event::emit(RegistryConfigUpdated { fee_bps, settler_reward_bps, price_tolerance_ms });
 }
 
 public(package) fun emit_treasury_withdrawn(amount: u64, recipient: address) {

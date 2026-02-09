@@ -29,7 +29,6 @@ public struct Registry has key {
     id: UID,
     fee_bps: u64,
     settler_reward_bps: u64,
-    min_bet: u64,
     price_tolerance_ms: u64,
     treasury: Balance<SUI>,
     market_ids: vector<ID>,
@@ -43,7 +42,6 @@ fun init(ctx: &mut TxContext) {
         id: object::new(ctx),
         fee_bps: 200,               // 2%
         settler_reward_bps: 200,     // 2% of fee
-        min_bet: 100_000_000,        // 0.1 SUI
         price_tolerance_ms: 10_000,  // 10 seconds
         treasury: balance::zero(),
         market_ids: vector::empty(),
@@ -59,17 +57,15 @@ public fun update_config(
     registry: &mut Registry,
     fee_bps: u64,
     settler_reward_bps: u64,
-    min_bet: u64,
     price_tolerance_ms: u64,
 ) {
     assert!(fee_bps <= MAX_FEE_BPS, EInvalidFeeBps);
     assert!(settler_reward_bps <= MAX_SETTLER_REWARD_BPS, EInvalidSettlerRewardBps);
     registry.fee_bps = fee_bps;
     registry.settler_reward_bps = settler_reward_bps;
-    registry.min_bet = min_bet;
     registry.price_tolerance_ms = price_tolerance_ms;
 
-    events::emit_registry_config_updated(fee_bps, settler_reward_bps, min_bet, price_tolerance_ms);
+    events::emit_registry_config_updated(fee_bps, settler_reward_bps, price_tolerance_ms);
 }
 
 public fun withdraw_treasury(
@@ -87,7 +83,6 @@ public fun withdraw_treasury(
 
 public(package) fun fee_bps(r: &Registry): u64 { r.fee_bps }
 public(package) fun settler_reward_bps(r: &Registry): u64 { r.settler_reward_bps }
-public(package) fun min_bet(r: &Registry): u64 { r.min_bet }
 public(package) fun price_tolerance_ms(r: &Registry): u64 { r.price_tolerance_ms }
 public(package) fun uid(r: &Registry): &UID { &r.id }
 

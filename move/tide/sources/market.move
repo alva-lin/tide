@@ -4,7 +4,7 @@ module tide::market;
 use sui::sui::SUI;
 use sui::coin::{Self, Coin};
 use sui::balance::{Self, Balance};
-use sui::object_table::{Self, ObjectTable};
+use sui::clock::Clock;
 use sui::table::{Self, Table};
 
 use pyth::price_info::{Self, PriceInfoObject};
@@ -29,6 +29,10 @@ const ENoUpcomingRound: u64 = 108;
 const ERoundNotLiveOrUpcoming: u64 = 109;
 const ENegativePrice: u64 = 110;
 const EInvalidInterval: u64 = 111;
+const EStartTimeTooEarly: u64 = 112;
+const EUpcomingRoundExists: u64 = 113;
+const EExponentMismatch: u64 = 114;
+const ECurrentTimeTooEarly: u64 = 115;
 
 
 // === Status Constants ===
@@ -56,16 +60,15 @@ public struct Market has key {
     id: UID,
     pyth_feed_id: vector<u8>,
     interval_ms: u64,
+    min_bet: u64,
     status: u8,
     round_count: u64,
-    current_round_id: Option<ID>,
-    upcoming_round_id: Option<ID>,
-    rounds: ObjectTable<u64, Round>,
-    user_stats: Table<address, UserStats>,
+    current_round: u64,
+    upcoming_round: u64,
+    rounds: Table<u64, Round>,
 }
 
-public struct Round has key, store {
-    id: UID,
+public struct Round has store {
     round_number: u64,
     status: u8,
     start_time_ms: u64,
@@ -84,13 +87,6 @@ public struct Round has key, store {
     result: Option<u8>,
 }
 
-public struct UserStats has store {
-    total_rounds: u64,
-    wins: u64,
-    cancels: u64,
-    total_bet: u64,
-    total_won: u64,
-}
 
 // === Create Market ===
 
@@ -99,35 +95,33 @@ public fun create_market(
     registry: &mut Registry,
     pyth_feed_id: vector<u8>,
     interval_ms: u64,
+    min_bet: u64,
     start_time_ms: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(interval_ms > 0, EInvalidInterval);
+    assert!(start_time_ms >= clock.timestamp_ms() + interval_ms, EStartTimeTooEarly);
 
     let mut market = Market {
         id: object::new(ctx),
         pyth_feed_id,
         interval_ms,
+        min_bet,
         status: STATUS_ACTIVE,
         round_count: 0,
-        current_round_id: option::none(),
-        upcoming_round_id: option::none(),
-        rounds: object_table::new(ctx),
-        user_stats: table::new(ctx),
+        current_round: 0,
+        upcoming_round: 0,
+        rounds: table::new(ctx),
     };
-
-    // Create first UPCOMING round
-    let round = create_round(start_time_ms, 1, ctx);
-    let round_id = object::id(&round);
-    market.upcoming_round_id = option::some(round_id);
-    market.round_count = 1;
-    market.rounds.add(1, round);
 
     let market_id = object::id(&market);
     registry.add_market_id(market_id);
 
+    // Create first UPCOMING round
+    create_upcoming_round(&mut market, start_time_ms);
+
     events::emit_market_created(market_id, market.pyth_feed_id, interval_ms, start_time_ms);
-    events::emit_round_created(market_id, 1, start_time_ms);
 
     transfer::share_object(market);
 }
@@ -138,22 +132,31 @@ public fun settle_and_advance(
     registry: &mut Registry,
     market: &mut Market,
     price_info_object: &PriceInfoObject,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let (price_magnitude, price_expo, price_timestamp_ms) =
+        extract_pyth_price(price_info_object, &market.pyth_feed_id);
+
+    settle_and_advance_internal(registry, market, price_magnitude, price_expo, price_timestamp_ms, clock, ctx);
+}
+
+// === Pyth Price Helper ===
+
+fun extract_pyth_price(
+    price_info_object: &PriceInfoObject,
+    expected_feed_id: &vector<u8>,
+): (u64, u64, u64) {
     // Extract price from Pyth (no age check — we validate timestamp manually)
     let price_struct = pyth::get_price_unsafe(price_info_object);
 
     // Validate feed ID
     let price_info = price_info::get_price_info_from_price_info_object(price_info_object);
     let price_id = price_identifier::get_bytes(&price_info::get_price_identifier(&price_info));
-    assert!(price_id == market.pyth_feed_id, EInvalidPriceFeedId);
-
-    // Extract price values
-    let price_i64 = pyth_price::get_price(&price_struct);
-    let price_timestamp_s = pyth_price::get_timestamp(&price_struct);
-    let price_timestamp_ms = price_timestamp_s * 1000;
+    assert!(price_id == *expected_feed_id, EInvalidPriceFeedId);
 
     // Get price magnitude (asset prices should be positive)
+    let price_i64 = pyth_price::get_price(&price_struct);
     assert!(!i64::get_is_negative(&price_i64), ENegativePrice);
     let price_magnitude = i64::get_magnitude_if_positive(&price_i64);
 
@@ -165,42 +168,48 @@ public fun settle_and_advance(
         i64::get_magnitude_if_positive(&expo_i64)
     };
 
-    settle_and_advance_internal(registry, market, price_magnitude, price_expo, price_timestamp_ms, ctx);
+    // Get timestamp in ms
+    let price_timestamp_s = pyth_price::get_timestamp(&price_struct);
+    let price_timestamp_ms = price_timestamp_s * 1000;
+
+    (price_magnitude, price_expo, price_timestamp_ms)
 }
 
-// === Admin: Cancel Round ===
 
-public fun cancel_round(
-    _: &AdminCap,
-    market: &mut Market,
-    round_number: u64,
-) {
-    let round = &mut market.rounds[round_number];
-    assert!(
-        round.status == ROUND_UPCOMING || round.status == ROUND_LIVE,
-        ERoundNotLiveOrUpcoming,
-    );
-
-    round.status = ROUND_CANCELLED;
-    round.prize_pool = round.up_amount + round.down_amount; // full refund
-
-    // Update market pointers
-    if (market.current_round_id == option::some(object::id(round))) {
-        market.current_round_id = option::none();
-    };
-    if (market.upcoming_round_id == option::some(object::id(round))) {
-        market.upcoming_round_id = option::none();
-    };
-
-    events::emit_round_cancelled(object::id(market), round_number);
-}
 
 // === Admin: Pause Market ===
 
 public fun pause_market(_: &AdminCap, market: &mut Market) {
     assert!(market.status == STATUS_ACTIVE, EMarketPaused);
     market.status = STATUS_PAUSED;
-    events::emit_market_paused(object::id(market));
+
+    let market_id = object::id(market);
+
+    // Cancel current LIVE round if exists
+    if (market.current_round != 0) {
+        let live_num = market.current_round;
+        let live_round = &mut market.rounds[live_num];
+        if (live_round.status == ROUND_LIVE) {
+            live_round.status = ROUND_CANCELLED;
+            live_round.prize_pool = live_round.up_amount + live_round.down_amount;
+            events::emit_round_cancelled(market_id, live_num);
+        };
+        market.current_round = 0;
+    };
+
+    // Cancel current UPCOMING round if exists
+    if (market.upcoming_round != 0) {
+        let upcoming_num = market.upcoming_round;
+        let upcoming_round = &mut market.rounds[upcoming_num];
+        if (upcoming_round.status == ROUND_UPCOMING) {
+            upcoming_round.status = ROUND_CANCELLED;
+            upcoming_round.prize_pool = upcoming_round.up_amount + upcoming_round.down_amount;
+            events::emit_round_cancelled(market_id, upcoming_num);
+        };
+        market.upcoming_round = 0;
+    };
+
+    events::emit_market_paused(market_id);
 }
 
 // === Admin: Resume Market ===
@@ -209,62 +218,29 @@ public fun resume_market(
     _: &AdminCap,
     market: &mut Market,
     new_start_time_ms: u64,
-    ctx: &mut TxContext,
+    clock: &Clock,
 ) {
     assert!(market.status == STATUS_PAUSED, EMarketNotPaused);
+    assert!(new_start_time_ms >= clock.timestamp_ms() + market.interval_ms, EStartTimeTooEarly);
     market.status = STATUS_ACTIVE;
 
-    // Cancel current LIVE round if exists
-    if (market.current_round_id.is_some()) {
-        // Find the live round number — it's the round before upcoming
-        let upcoming_num = market.round_count;
-        if (upcoming_num > 1) {
-            let live_num = upcoming_num - 1;
-            let live_round = &mut market.rounds[live_num];
-            if (live_round.status == ROUND_LIVE) {
-                live_round.status = ROUND_CANCELLED;
-                live_round.prize_pool = live_round.up_amount + live_round.down_amount;
-                events::emit_round_cancelled(object::id(market), live_num);
-            };
-        };
-        market.current_round_id = option::none();
-    };
-
-    // Cancel current UPCOMING round if exists
-    if (market.upcoming_round_id.is_some()) {
-        let upcoming_num = market.round_count;
-        let upcoming_round = &mut market.rounds[upcoming_num];
-        if (upcoming_round.status == ROUND_UPCOMING) {
-            upcoming_round.status = ROUND_CANCELLED;
-            upcoming_round.prize_pool = upcoming_round.up_amount + upcoming_round.down_amount;
-            events::emit_round_cancelled(object::id(market), upcoming_num);
-        };
-        market.upcoming_round_id = option::none();
-    };
-
     // Create new UPCOMING round
-    let market_id = object::id(market);
-    let new_number = market.round_count + 1;
-    let new_round = create_round(new_start_time_ms, new_number, ctx);
-    let new_round_id = object::id(&new_round);
-    market.rounds.add(new_number, new_round);
-    market.upcoming_round_id = option::some(new_round_id);
-    market.round_count = new_number;
+    create_upcoming_round(market, new_start_time_ms);
 
-    events::emit_market_resumed(market_id, new_start_time_ms);
-    events::emit_round_created(market_id, new_number, new_start_time_ms);
+    events::emit_market_resumed(object::id(market), new_start_time_ms);
 }
 
 // === Package-Internal Functions (for bet.move) ===
+
+public(package) fun min_bet(market: &Market): u64 { market.min_bet }
 
 public(package) fun assert_active(market: &Market) {
     assert!(market.status == STATUS_ACTIVE, EMarketPaused);
 }
 
 public(package) fun get_upcoming_round_mut(market: &mut Market): &mut Round {
-    assert!(market.upcoming_round_id.is_some(), ENoUpcomingRound);
-    let upcoming_number = find_upcoming_number(market);
-    &mut market.rounds[upcoming_number]
+    assert!(market.upcoming_round != 0, ENoUpcomingRound);
+    &mut market.rounds[market.upcoming_round]
 }
 
 public(package) fun get_round(market: &Market, round_number: u64): &Round {
@@ -275,21 +251,7 @@ public(package) fun get_round_mut(market: &mut Market, round_number: u64): &mut 
     &mut market.rounds[round_number]
 }
 
-public(package) fun get_or_create_user_stats(
-    market: &mut Market,
-    user: address,
-): &mut UserStats {
-    if (!market.user_stats.contains(user)) {
-        market.user_stats.add(user, UserStats {
-            total_rounds: 0,
-            wins: 0,
-            cancels: 0,
-            total_bet: 0,
-            total_won: 0,
-        });
-    };
-    &mut market.user_stats[user]
-}
+
 
 // Round accessors
 public(package) fun round_status(r: &Round): u8 { r.status }
@@ -318,21 +280,7 @@ public(package) fun round_withdraw(r: &mut Round, amount: u64, ctx: &mut TxConte
     coin::from_balance(r.pool.split(amount), ctx)
 }
 
-// UserStats mutators
-public(package) fun stats_add_round(s: &mut UserStats, bet_amount: u64) {
-    s.total_rounds = s.total_rounds + 1;
-    s.total_bet = s.total_bet + bet_amount;
-}
 
-public(package) fun stats_add_win(s: &mut UserStats, payout: u64) {
-    s.wins = s.wins + 1;
-    s.total_won = s.total_won + payout;
-}
-
-public(package) fun stats_add_cancel(s: &mut UserStats, payout: u64) {
-    s.cancels = s.cancels + 1;
-    s.total_won = s.total_won + payout;
-}
 
 // Direction / result constants
 public(package) fun direction_up(): u8 { DIRECTION_UP }
@@ -344,9 +292,8 @@ public(package) fun round_cancelled(): u8 { ROUND_CANCELLED }
 
 // === Internal Helpers ===
 
-fun create_round(start_time_ms: u64, round_number: u64, ctx: &mut TxContext): Round {
+fun create_round(start_time_ms: u64, round_number: u64): Round {
     Round {
-        id: object::new(ctx),
         round_number,
         status: ROUND_UPCOMING,
         start_time_ms,
@@ -372,13 +319,17 @@ fun settle_and_advance_internal(
     price_magnitude: u64,
     price_expo: u64,
     price_timestamp_ms: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(market.status == STATUS_ACTIVE, EMarketPaused);
-    assert!(market.upcoming_round_id.is_some(), ENoUpcomingRound);
+    assert!(market.upcoming_round != 0, ENoUpcomingRound);
 
-    let upcoming_number = market.round_count;
+    let upcoming_number = market.upcoming_round;
     let anchor_time_ms = market.rounds[upcoming_number].start_time_ms;
+
+    // Validate current time >= anchor_time (cannot settle before round starts)
+    assert!(clock.timestamp_ms() >= anchor_time_ms, ECurrentTimeTooEarly);
 
     // Validate price timestamp: [anchor_time, anchor_time + tolerance]
     let tolerance_ms = registry.price_tolerance_ms();
@@ -389,8 +340,8 @@ fun settle_and_advance_internal(
 
     // Step 1: If there's a LIVE round, settle it
     let mut settler_reward_total: u64 = 0;
-    if (market.current_round_id.is_some()) {
-        let live_number = upcoming_number - 1;
+    if (market.current_round != 0) {
+        let live_number = market.current_round;
 
         let live_round = &mut market.rounds[live_number];
         assert!(live_round.status == ROUND_LIVE, ERoundNotLiveOrUpcoming);
@@ -403,6 +354,9 @@ fun settle_and_advance_internal(
         live_round.close_price = option::some(price_magnitude);
         live_round.close_price_expo = option::some(price_expo);
         live_round.close_timestamp_ms = option::some(price_timestamp_ms);
+
+        // Ensure exponent consistency for correct comparison
+        assert!(open_expo == price_expo, EExponentMismatch);
 
         // Determine result
         let result = determine_result(open_p, price_magnitude);
@@ -424,13 +378,13 @@ fun settle_and_advance_internal(
         let fee = if (winning_total == 0) {
             total
         } else {
-            total * registry.fee_bps() / BPS_BASE
+            (((total as u128) * (registry.fee_bps() as u128) / (BPS_BASE as u128)) as u64)
         };
 
         if (fee > 0) {
             let mut fee_balance = live_round.pool.split(fee);
 
-            let settler_reward = fee * registry.settler_reward_bps() / BPS_BASE;
+            let settler_reward = (((fee as u128) * (registry.settler_reward_bps() as u128) / (BPS_BASE as u128)) as u64);
             if (settler_reward > 0) {
                 settler_reward_total = settler_reward;
                 let reward_balance = fee_balance.split(settler_reward);
@@ -468,17 +422,11 @@ fun settle_and_advance_internal(
     upcoming_round.open_timestamp_ms = option::some(price_timestamp_ms);
 
     let new_start_time = upcoming_round.start_time_ms + market.interval_ms;
-    market.current_round_id = market.upcoming_round_id;
+    market.current_round = upcoming_number;
+    market.upcoming_round = 0;
 
     // Step 3: Create new UPCOMING round
-    let new_number = upcoming_number + 1;
-    let new_round = create_round(new_start_time, new_number, ctx);
-    let new_round_id = object::id(&new_round);
-    market.rounds.add(new_number, new_round);
-    market.upcoming_round_id = option::some(new_round_id);
-    market.round_count = new_number;
-
-    events::emit_round_created(market_id, new_number, new_start_time);
+    create_upcoming_round(market, new_start_time);
 }
 
 fun determine_result(open_p: u64, close_p: u64): u8 {
@@ -491,9 +439,16 @@ fun determine_result(open_p: u64, close_p: u64): u8 {
     }
 }
 
-fun find_upcoming_number(market: &Market): u64 {
-    // Upcoming round is always the latest created round
-    market.round_count
+fun create_upcoming_round(market: &mut Market, start_time_ms: u64) {
+    assert!(market.upcoming_round == 0, EUpcomingRoundExists);
+
+    let new_number = market.round_count + 1;
+    let new_round = create_round(start_time_ms, new_number);
+    market.rounds.add(new_number, new_round);
+    market.upcoming_round = new_number;
+    market.round_count = new_number;
+
+    events::emit_round_created(object::id(market), new_number, start_time_ms);
 }
 
 // === Test Helpers ===
@@ -513,9 +468,10 @@ public fun test_settle_and_advance(
     market: &mut Market,
     price_magnitude: u64,
     price_timestamp_ms: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    settle_and_advance_internal(registry, market, price_magnitude, 0, price_timestamp_ms, ctx);
+    settle_and_advance_internal(registry, market, price_magnitude, 0, price_timestamp_ms, clock, ctx);
 }
 
 #[test_only]
@@ -524,16 +480,6 @@ public fun market_round_count(m: &Market): u64 { m.round_count }
 #[test_only]
 public fun market_status(m: &Market): u8 { m.status }
 
-#[test_only]
-public fun get_user_stats_values(market: &Market, user: address): (u64, u64, u64, u64, u64) {
-    let stats = &market.user_stats[user];
-    (stats.total_rounds, stats.wins, stats.cancels, stats.total_bet, stats.total_won)
-}
-
-#[test_only]
-public fun has_user_stats(market: &Market, user: address): bool {
-    market.user_stats.contains(user)
-}
 
 #[test_only]
 public fun round_pool_value(market: &Market, round_number: u64): u64 {

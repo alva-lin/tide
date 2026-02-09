@@ -89,10 +89,12 @@ Ticket 为用户持有的 owned object，已 redeem 的 Ticket 会被销毁。�
 
 ```
 1. getObject(market_id)
-   → current_round_id, upcoming_round_id
+   → market 完整数据，包含 current_round / upcoming_round 序号
+   → rounds Table 中的 Round 数据可通过 getDynamicFieldObject 访问
 
-2. multiGetObjects([current_round_id, upcoming_round_id])
-   → 当前轮 + 下一轮详情
+2. getDynamicFieldObject(market_id, current_round)
+   getDynamicFieldObject(market_id, upcoming_round)
+   → 当前 LIVE 轮 + 下一轮详情
 
 3. GraphQL events 倒序查询 RoundSettled (last: N)
    → 最近 N 轮历史结果
@@ -110,9 +112,10 @@ Ticket 为用户持有的 owned object，已 redeem 的 Ticket 会被销毁。�
    - Redeemed (sender = user)   → 已兑现记录（含 outcome 和 payout）
    → 交叉匹配得出每笔投注的完整生命周期和盈亏
 
-3. 用户聚合数据直接读链上 UserStats:
-   getDynamicFieldObject(market_id, { type: "address", value: "0xUSER" })
-   → 一次查询获取 wins/draws/total_bet/total_won
+3. 用户聚合统计（胜场、总投注、总赢取等）由 Keeper 链下索引提供:
+   - Keeper 索引 BetPlaced / Redeemed 事件，聚合用户数据
+   - 前端通过 Keeper API 查询（Phase 2）
+   - MVP 阶段可前端本地查询事件聚合
 ```
 
 所有查询均通过 Sui 节点 gRPC / GraphQL 完成，MVP 阶段无需额外后端服务。
@@ -121,12 +124,11 @@ Ticket 为用户持有的 owned object，已 redeem 的 Ticket 会被销毁。�
 
 ## 4. 排行榜数据
 
-采用**链上 UserStats + 链下索引**方案：
+采用 **Keeper 链下索引**方案：
 
-- 合约在 `place_bet` / `redeem` 时自动维护 `UserStats`（存于 Market 的 `Table<address, UserStats>`）
-- 个人聚合数据可直接链上查询（一次 `getDynamicFieldObject(market_id, user_address)`）
-- 排行榜 Top N 排序由链下索引器聚合（链上无法做排序查询）
-- 索引器通过 `getDynamicFields(market_id)` 遍历所有 UserStats，定期刷新快照
+- Keeper 在结算之余监听 `BetPlaced` 和 `Redeemed` 事件，聚合每个用户的统计数据（胜场、总投注、总赢取等）
+- 排行榜 Top N 排序由 Keeper 索引服务计算并提供 API
+- MVP 阶段可用前端直接查询事件并本地聚合，Phase 2 由 Keeper 统一处理
 
 ---
 

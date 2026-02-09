@@ -65,7 +65,7 @@ price_timestamp = price::get_timestamp(&price_struct)
 
 ### 3.1 权限模型
 
-`settle_and_advance` 为 **permissionless**（任何人可调用）。正常胜负轮次中，调用者从手续费中获得 `settler_reward_bps` 比例的激励（默认 200bps = fee 的 2%），平局/单边/取消轮次无激励。官方 Keeper 作为兜底确保轮次持续推进。
+`settle_and_advance` 为 **permissionless**（任何人可调用）。调用者从手续费中获得 `settler_reward_bps` 比例的激励（默认 200bps = fee 的 2%），官方 Keeper 作为兜底确保轮次持续推进。
 
 ### 3.2 价格时间戳校验
 
@@ -83,10 +83,15 @@ price_timestamp <= upcoming.start_time + price_tolerance_ms
 
 ### 3.3 Keeper 实现
 
-TypeScript 定时脚本（官方兜底 bot），核心逻辑：
+TypeScript 定时脚本（官方兜底 bot），核心职责：
 
+**结算（Phase 1）：**
 1. 定时检查（每轮结束时触发）
 2. 从 Pyth Hermes 拉取 **round_end_time 之后最近的价格**（`/v2/updates/price/{round_end_timestamp}`）
 3. 构建交易：`pyth.updatePriceFeeds()` + `settle_and_advance()`
 4. 签名提交
 5. 可在单个 PTB 中批量结算所有市场
+
+**链下索引（Phase 2）：**
+- 监听 `BetPlaced` / `Redeemed` 事件，聚合用户统计数据（胜场、总投注、总赢取等）
+- 提供排行榜 API 供前端查询
