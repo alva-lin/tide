@@ -106,12 +106,20 @@ export async function catchUpMarket(
 
   // Within tolerance — settle this round, then check again
   // (multiple rounds may have become due while we were processing)
+  let lastSettledRound: number | null = null;
   while (true) {
     // First iteration reuses the snapshot; subsequent iterations re-fetch.
     if (!info) {
       const snap = await getMarketSnapshot(marketId);
       if (!snap?.upcomingRound) break;
       info = snap.upcomingRound;
+
+      // Stale-read guard: if the fullnode hasn't indexed our last settle yet,
+      // upcoming_round will still point to the round we just settled.
+      if (lastSettledRound !== null && info.upcomingRound <= lastSettledRound) {
+        console.log(`[catch-up] stale read (upcoming still ${info.upcomingRound}), exiting loop`);
+        break;
+      }
     }
 
     const t = Date.now();
@@ -140,6 +148,7 @@ export async function catchUpMarket(
         const tx = await buildSettleAndAdvance(marketId, feedId, anchorTimeSec);
         await execute(tx);
         result.settledRounds++;
+        lastSettledRound = info.upcomingRound;
         console.log(`[catch-up] settled round ${info.upcomingRound}`);
         settled = true;
         break;
