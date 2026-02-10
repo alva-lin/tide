@@ -61,12 +61,16 @@ fun place_bet_helper(
     player: address,
     direction: u8,
     amount: u64,
+    clock_time_ms: u64,
 ) {
     scenario.next_tx(player);
     {
         let mut market = scenario.take_shared<Market>();
         let payment = coin::mint_for_testing<SUI>(amount, scenario.ctx());
-        bet::place_bet(&mut market, direction, payment, scenario.ctx());
+        let mut clock = clock::create_for_testing(scenario.ctx());
+        clock::set_for_testing(&mut clock, clock_time_ms);
+        bet::place_bet(&mut market, direction, payment, &clock, scenario.ctx());
+        clock.destroy_for_testing();
         ts::return_shared(market);
     };
 }
@@ -222,7 +226,7 @@ fun test_create_market() {
 #[test]
 fun test_place_bet_up() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
 
     scenario.next_tx(ALICE);
     {
@@ -243,7 +247,7 @@ fun test_place_bet_up() {
 #[test]
 fun test_place_bet_down() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI); // DOWN
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0); // DOWN
 
     scenario.next_tx(BOB);
     {
@@ -259,9 +263,9 @@ fun test_place_bet_down() {
 #[test]
 fun test_multiple_bets_same_round() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
-    place_bet_helper(&mut scenario, BOB, 1, 2 * ONE_SUI);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // Alice bets again
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
+    place_bet_helper(&mut scenario, BOB, 1, 2 * ONE_SUI, 0);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // Alice bets again
 
     scenario.next_tx(ALICE);
     {
@@ -278,14 +282,14 @@ fun test_multiple_bets_same_round() {
 #[test, expected_failure(abort_code = 200, location = tide::bet)]
 fun test_place_bet_invalid_direction() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 2, ONE_SUI); // invalid direction
+    place_bet_helper(&mut scenario, ALICE, 2, ONE_SUI, 0); // invalid direction
     scenario.end();
 }
 
 #[test, expected_failure(abort_code = 201, location = tide::bet)]
 fun test_place_bet_too_small() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, MIN_BET - 1);
+    place_bet_helper(&mut scenario, ALICE, 0, MIN_BET - 1, 0);
     scenario.end();
 }
 
@@ -302,7 +306,23 @@ fun test_place_bet_market_paused() {
         ts::return_shared(market);
     };
     // Try to bet
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = 204, location = tide::bet)]
+fun test_place_bet_after_round_start() {
+    let mut scenario = setup();
+    // Try to bet at exactly start_time — should fail (must be strictly before)
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, START_TIME_MS);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = 204, location = tide::bet)]
+fun test_place_bet_after_round_start_late() {
+    let mut scenario = setup();
+    // Try to bet well after start_time
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, START_TIME_MS + 60_000);
     scenario.end();
 }
 
@@ -313,7 +333,7 @@ fun test_place_bet_market_paused() {
 #[test]
 fun test_first_settle_no_live_round() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // First settle: no LIVE round, just UPCOMING->LIVE + create new UPCOMING
     settle_helper(&mut scenario, SETTLER, 3_500_000_000, START_TIME_MS);
@@ -339,14 +359,14 @@ fun test_first_settle_no_live_round() {
 fun test_settle_with_winners_up() {
     let mut scenario = setup();
     // Round 1: ALICE bets UP, BOB bets DOWN
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);   // DOWN
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);   // DOWN
 
     // First settle: R1 UPCOMING->LIVE, open_price=100
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
 
     // Round 2: some bets
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Second settle: R1 settles (close_price=150, UP wins), R2 UPCOMING->LIVE
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -381,11 +401,11 @@ fun test_settle_with_winners_up() {
 #[test]
 fun test_settle_with_winners_down() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);   // DOWN
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);   // DOWN
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // close < open → DOWN wins
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -404,11 +424,11 @@ fun test_settle_with_winners_down() {
 #[test]
 fun test_settle_draw() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);   // DOWN
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);   // DOWN
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // close == open → DRAW, no winners, fee = total
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -437,11 +457,11 @@ fun test_settle_draw() {
 fun test_settle_single_side_all_win() {
     let mut scenario = setup();
     // Only UP bets
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
-    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
+    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI, 0);
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Price goes up → everyone wins, fee still deducted
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -463,10 +483,10 @@ fun test_settle_single_side_all_win() {
 fun test_settle_single_side_all_lose() {
     let mut scenario = setup();
     // Only UP bets
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Price goes down → all UP lose, fee = total
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -490,7 +510,7 @@ fun test_settle_no_bets() {
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
 
     // Settle again (R1 was LIVE with no bets → settles trivially)
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // bet on R2
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // bet on R2
 
     let r2_start = START_TIME_MS + INTERVAL_MS;
     settle_helper(&mut scenario, SETTLER, 150, r2_start);
@@ -530,12 +550,12 @@ fun test_settle_price_too_late() {
 fun test_redeem_winner() {
     let mut scenario = setup();
     // Only Alice bets on round 1, no further bets to avoid multiple tickets
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);   // DOWN
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);   // DOWN
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
     // Don't place bets for Alice in round 2
-    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI); // someone else bets round 2
+    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI, 0); // someone else bets round 2
 
     // UP wins
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -557,11 +577,11 @@ fun test_redeem_winner() {
 #[test]
 fun test_redeem_loser() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);   // DOWN
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);   // DOWN
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI); // someone else bets round 2
+    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI, 0); // someone else bets round 2
 
     // DOWN wins (price drops) — Alice loses
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -581,7 +601,7 @@ fun test_redeem_loser() {
 #[test]
 fun test_redeem_cancelled() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Pause market — this cancels round 1
     scenario.next_tx(ADMIN);
@@ -612,7 +632,7 @@ fun test_redeem_cancelled() {
 #[test, expected_failure(abort_code = 202, location = tide::bet)]
 fun test_redeem_round_not_settled() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Try redeem before round is settled
     scenario.next_tx(ALICE);
@@ -628,12 +648,12 @@ fun test_redeem_round_not_settled() {
 #[test]
 fun test_redeem_draw_is_loss() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI); // UP
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);   // DOWN
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0); // UP
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);   // DOWN
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
     // Use a third party for round 2 bets
-    place_bet_helper(&mut scenario, SETTLER, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, SETTLER, 0, ONE_SUI, 0);
 
     // DRAW
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -664,12 +684,12 @@ fun test_redeem_proportional_payout() {
     // ALICE 1 SUI UP, BOB 3 SUI DOWN, CHARLIE 1 SUI UP
     // Using separate users so each has exactly 1 ticket
     let charlie: address = @0xC3;
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
-    place_bet_helper(&mut scenario, BOB, 1, 3 * ONE_SUI);
-    place_bet_helper(&mut scenario, charlie, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
+    place_bet_helper(&mut scenario, BOB, 1, 3 * ONE_SUI, 0);
+    place_bet_helper(&mut scenario, charlie, 0, ONE_SUI, 0);
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI); // round 2 bet by someone else
+    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI, 0); // round 2 bet by someone else
 
     // UP wins: total UP = 2 SUI, total = 5 SUI
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -708,7 +728,7 @@ fun test_redeem_proportional_payout() {
 #[test]
 fun test_pause_market_cancels_rounds() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     scenario.next_tx(ADMIN);
     {
@@ -731,7 +751,7 @@ fun test_pause_market_cancels_rounds() {
 #[test]
 fun test_pause_and_resume_market() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Pause — cancels round 1
     scenario.next_tx(ADMIN);
@@ -783,13 +803,13 @@ fun test_pause_and_resume_market() {
 #[test]
 fun test_pause_resume_with_live_round() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Settle to make round 1 LIVE
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
 
     // Place bet on round 2
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);
 
     // Pause — cancels both LIVE and UPCOMING rounds
     scenario.next_tx(ADMIN);
@@ -868,11 +888,11 @@ fun test_resume_not_paused() {
 #[test]
 fun test_withdraw_treasury_after_settle() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     let r2_start = START_TIME_MS + INTERVAL_MS;
     settle_helper(&mut scenario, SETTLER, 100, r2_start);
@@ -904,14 +924,14 @@ fun test_full_lifecycle() {
     let charlie: address = @0xC3;
 
     // Round 1: Alice UP 2 SUI, Bob DOWN 1 SUI
-    place_bet_helper(&mut scenario, ALICE, 0, 2 * ONE_SUI);
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, 2 * ONE_SUI, 0);
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);
 
     // First settle: R1 -> LIVE (open = 100)
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
 
     // Round 2: Charlie bets
-    place_bet_helper(&mut scenario, charlie, 1, ONE_SUI);
+    place_bet_helper(&mut scenario, charlie, 1, ONE_SUI, 0);
 
     // Second settle: R1 settles (close=120, UP wins), R2 -> LIVE
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -985,11 +1005,11 @@ fun test_create_market_min_bet_too_small() {
 fun test_settler_reward_consistent_in_draw() {
     // Verify settler_reward in DRAW is same as normal (based on normal_fee, not actual fee)
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
-    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
+    place_bet_helper(&mut scenario, BOB, 1, ONE_SUI, 0);
 
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // DRAW: fee = total = 2e9, but settler_reward based on normal_fee
     let r2_start = START_TIME_MS + INTERVAL_MS;
@@ -1009,7 +1029,7 @@ fun test_settler_reward_consistent_in_draw() {
 #[test, expected_failure(abort_code = 203, location = tide::bet)]
 fun test_redeem_ticket_market_mismatch() {
     let mut scenario = setup();
-    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, ALICE, 0, ONE_SUI, 0);
 
     // Create a second market
     scenario.next_tx(ADMIN);
@@ -1034,7 +1054,7 @@ fun test_redeem_ticket_market_mismatch() {
 
     // Settle first market so ticket becomes redeemable
     settle_helper(&mut scenario, SETTLER, 100, START_TIME_MS);
-    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI);
+    place_bet_helper(&mut scenario, BOB, 0, ONE_SUI, 0);
     let r2_start = START_TIME_MS + INTERVAL_MS;
     settle_helper(&mut scenario, SETTLER, 150, r2_start);
 

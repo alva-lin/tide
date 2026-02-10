@@ -1,5 +1,5 @@
 import { Transaction } from "@mysten/sui/transactions";
-import { PACKAGE_ID } from "../config.js";
+import { PACKAGE_ID, CLOCK_ID } from "../config.js";
 
 /**
  * Build a `place_bet` transaction.
@@ -23,6 +23,7 @@ export function buildPlaceBet(
       tx.object(marketId),
       tx.pure.u8(direction),
       coin,
+      tx.object(CLOCK_ID),
     ],
   });
 

@@ -2,6 +2,7 @@ module tide::bet;
 
 use sui::sui::SUI;
 use sui::coin::Coin;
+use sui::clock::Clock;
 
 use tide::market::{Self, Market};
 use tide::events;
@@ -12,6 +13,7 @@ const EInvalidDirection: u64 = 200;
 const EBetTooSmall: u64 = 201;
 const ERoundNotRedeemable: u64 = 202;
 const ETicketMarketMismatch: u64 = 203;
+const ERoundBettingClosed: u64 = 204;
 
 // === Structs ===
 
@@ -29,6 +31,7 @@ public fun place_bet(
     market: &mut Market,
     direction: u8,
     payment: Coin<SUI>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     market::assert_active(market);
@@ -41,6 +44,7 @@ public fun place_bet(
     assert!(amount >= market.min_bet(), EBetTooSmall);
 
     let round = market.get_upcoming_round_mut();
+    assert!(clock.timestamp_ms() < market::round_start_time_ms(round), ERoundBettingClosed);
     let round_number = market::round_number(round);
 
     // Record bet on round

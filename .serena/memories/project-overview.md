@@ -44,8 +44,8 @@ tide/
 - Price exponent stored per round (absolute value of Pyth exponent, always negative)
 - `settle_and_advance_internal` shared between production and test paths (no code duplication)
 - Payout calculation uses u128 intermediate to prevent overflow
-- `place_bet` does not require Clock object
+- `place_bet` requires Clock object for time validation (betting closes at round start_time)
 - `create_market` validates interval_ms > 0
 - 10 event types covering all operations (registry/market/round/bet/redeem)
-- 36 unit tests all passing
+- 39 unit tests all passing
 - Known limitation: `cancel_round` on UPCOMING leaves market without UPCOMING round, requires pause+resume to recover

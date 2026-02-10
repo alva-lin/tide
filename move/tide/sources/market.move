@@ -262,6 +262,7 @@ public(package) fun round_result(r: &Round): Option<u8> { r.result }
 public(package) fun round_up_amount(r: &Round): u64 { r.up_amount }
 public(package) fun round_down_amount(r: &Round): u64 { r.down_amount }
 public(package) fun round_prize_pool(r: &Round): u64 { r.prize_pool }
+public(package) fun round_start_time_ms(r: &Round): u64 { r.start_time_ms }
 
 public(package) fun round_add_bet(r: &mut Round, direction: u8, amount: u64) {
     assert!(r.status == ROUND_UPCOMING, ERoundNotUpcoming);
