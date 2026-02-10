@@ -6,7 +6,6 @@ import {
   buildPauseMarket,
   buildResumeMarket,
   buildPlaceBet,
-  buildSettleAndAdvance,
   buildRedeem,
   buildRedeemAll,
   buildUpdateConfig,
@@ -135,9 +134,8 @@ async function main() {
     case "redeem-all": {
       const [market] = args;
       if (!market) { console.error("Usage: redeem-all <market>"); process.exit(1); }
-      const { marketId, feedId } = resolveMarket(market);
-      if (!feedId) { console.error("Must use a named market or provide feedId"); process.exit(1); }
-      await redeemAllTickets(marketId, feedId);
+      const { marketId } = resolveMarket(market);
+      await redeemAllTickets(marketId);
       break;
     }
 
@@ -251,19 +249,15 @@ async function listTickets(owner: string, marketId?: string) {
   }
 }
 
-async function redeemAllTickets(marketId: string, feedId: string) {
-  // Step 1: catch up stale rounds so tickets become redeemable
-  console.log("[redeem-all] catching up market...");
-  await catchUpMarket(marketId, feedId);
-
-  // Step 2: find all tickets for this market
+async function redeemAllTickets(marketId: string) {
+  // Step 1: find all tickets for this market
   const tickets = await getOwnedTickets(address, marketId);
   if (tickets.length === 0) {
     console.log("[redeem-all] no tickets to redeem.");
     return;
   }
 
-  // Step 3: read market state to find which rounds are redeemable (SETTLED or CANCELLED)
+  // Step 2: read market state to find which rounds are redeemable (SETTLED or CANCELLED)
   const marketState = await getMarketState(marketId);
   const roundCount = marketState?.roundCount ?? 100;
   const data = await getRecentRounds(marketId, roundCount);

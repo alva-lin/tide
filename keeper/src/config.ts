@@ -68,6 +68,7 @@ export function suiToMist(sui: string): number {
 
 /** Calculate next aligned start time for a given interval. */
 export function nextAlignedStartTime(intervalMs: number): number {
+  const bufferMs = 5_000;
   const now = Date.now();
-  return Math.ceil(now / intervalMs) * intervalMs + intervalMs;
+  return Math.ceil((now + bufferMs) / intervalMs) * intervalMs + intervalMs;
 }

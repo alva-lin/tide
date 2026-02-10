@@ -40,7 +40,7 @@ export async function fetchPriceUpdateAtTime(
   params.append("parsed", "false");
 
   const url = `${hermesUrl}/v2/updates/price/${publishTimeSec}?${params.toString()}`;
-  const resp = await fetch(url);
+  const resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   if (!resp.ok) {
     throw new Error(`Hermes fetch failed: ${resp.status} ${await resp.text()}`);
   }

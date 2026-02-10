@@ -16,6 +16,12 @@ export interface MarketState {
   tableId: string;
 }
 
+export interface RegistryConfig {
+  feeBps: number;
+  settlerRewardBps: number;
+  priceToleranceMs: number;
+}
+
 export interface RoundData {
   roundNumber: number;
   status: number;
@@ -35,49 +41,17 @@ export interface RoundData {
   result: number | null;
 }
 
-interface MarketFields {
-  status: number;
-  upcoming_round: string;
-  current_round: string;
-  interval_ms: string;
-  round_count: string;
+export interface MarketSnapshot {
+  state: MarketState;
+  upcomingRound: UpcomingRoundInfo | null;
 }
 
 /**
- * Query on-chain market state and return info about the upcoming round.
- * Returns null if market is paused or has no upcoming round.
+ * Read the market object once and derive both MarketState and UpcomingRoundInfo.
+ * Only issues 1 RPC for the market object + 1 for the dynamic field (if upcoming round exists).
  */
-export async function getUpcomingRoundInfo(
-  marketId: string,
-): Promise<UpcomingRoundInfo | null> {
+export async function getMarketSnapshot(marketId: string): Promise<MarketSnapshot | null> {
   const obj = await getMarketObject(marketId);
-  const content = obj.data?.content;
-  if (content?.dataType !== "moveObject") return null;
-
-  const fields = content.fields as unknown as MarketFields;
-  const upcomingRound = Number(fields.upcoming_round);
-  const status = Number(fields.status);
-
-  if (status !== 0 || upcomingRound === 0) return null;
-
-  const roundFields = await getTableItem(marketId, upcomingRound);
-  if (!roundFields) return null;
-
-  return {
-    startTimeMs: Number(roundFields.start_time_ms),
-    upcomingRound,
-    status,
-  };
-}
-
-async function getTableItem(
-  marketId: string,
-  roundNumber: number,
-): Promise<Record<string, string> | null> {
-  const obj = await client.getObject({
-    id: marketId,
-    options: { showContent: true },
-  });
   const content = obj.data?.content;
   if (content?.dataType !== "moveObject") return null;
 
@@ -86,6 +60,37 @@ async function getTableItem(
   const tableId = roundsField?.fields?.id?.id;
   if (!tableId) return null;
 
+  const state: MarketState = {
+    status: Number(fields.status),
+    currentRound: Number(fields.current_round),
+    upcomingRound: Number(fields.upcoming_round),
+    roundCount: Number(fields.round_count),
+    intervalMs: Number(fields.interval_ms),
+    tableId,
+  };
+
+  let upcomingRound: UpcomingRoundInfo | null = null;
+  if (state.status === 0 && state.upcomingRound !== 0) {
+    const roundFields = await getRoundFromTable(tableId, state.upcomingRound);
+    if (roundFields) {
+      upcomingRound = {
+        startTimeMs: Number(roundFields.start_time_ms),
+        upcomingRound: state.upcomingRound,
+        status: state.status,
+      };
+    }
+  }
+
+  return { state, upcomingRound };
+}
+
+/**
+ * Read a single round from the dynamic field table (1 RPC).
+ */
+async function getRoundFromTable(
+  tableId: string,
+  roundNumber: number,
+): Promise<Record<string, string> | null> {
   try {
     const dynamicField = await client.getDynamicFieldObject({
       parentId: tableId,
@@ -97,7 +102,6 @@ async function getTableItem(
 
     const dfFields = dfContent.fields as Record<string, unknown>;
     const value = dfFields.value as Record<string, unknown>;
-    // value may be a raw object or { type, fields } wrapper from Sui RPC
     const rawFields = (value && typeof value === "object" && "fields" in value)
       ? (value as { fields: Record<string, unknown> }).fields
       : value;
@@ -128,6 +132,40 @@ export async function getMarketState(marketId: string): Promise<MarketState | nu
     intervalMs: Number(fields.interval_ms),
     tableId,
   };
+}
+
+/**
+ * Read Registry config from chain (fee_bps, settler_reward_bps, price_tolerance_ms).
+ */
+let _registryCache: RegistryConfig | null = null;
+let _registryCacheId = "";
+let _registryCacheTime = 0;
+
+export async function getRegistryConfig(registryId: string): Promise<RegistryConfig | null> {
+  // Cache for 10s — registry config rarely changes
+  const now = Date.now();
+  if (_registryCache && _registryCacheId === registryId && now - _registryCacheTime < 10_000) {
+    return _registryCache;
+  }
+
+  const obj = await client.getObject({
+    id: registryId,
+    options: { showContent: true },
+  });
+  const content = obj.data?.content;
+  if (content?.dataType !== "moveObject") return null;
+
+  const fields = content.fields as Record<string, unknown>;
+  const config: RegistryConfig = {
+    feeBps: Number(fields.fee_bps),
+    settlerRewardBps: Number(fields.settler_reward_bps),
+    priceToleranceMs: Number(fields.price_tolerance_ms),
+  };
+
+  _registryCache = config;
+  _registryCacheId = registryId;
+  _registryCacheTime = now;
+  return config;
 }
 
 function parseOptionField(val: unknown): string | null {
