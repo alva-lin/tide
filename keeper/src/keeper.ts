@@ -12,7 +12,7 @@ interface MarketConfig {
 const POLL_INTERVAL_MS = 5_000;
 
 const markets: MarketConfig[] = [
-  { marketId: MARKETS.SUI, feedId: PYTH_FEED_IDS.SUI_USD },
+  { marketId: MARKETS.SUI_1M, feedId: PYTH_FEED_IDS.SUI_USD },
 ];
 
 async function trySettle(mc: MarketConfig): Promise<void> {

@@ -1,5 +1,5 @@
 import { execute, getMarketObject } from "./execute.js";
-import { getRecentRounds, type RoundData, type MarketState } from "./market.js";
+import { getRecentRounds, getMarketState, type RoundData, type MarketState } from "./market.js";
 import { catchUpMarket } from "./catchUp.js";
 import {
   buildCreateMarket,
@@ -12,36 +12,35 @@ import {
   buildUpdateConfig,
   buildWithdrawTreasury,
 } from "./transactions/index.js";
-import { MARKETS, PYTH_FEED_IDS, PACKAGE_ID } from "./config.js";
+import { PACKAGE_ID, MARKET_REGISTRY, resolveMarket, suiToMist, nextAlignedStartTime } from "./config.js";
 import { client, address } from "./client.js";
+
+const MARKET_NAMES = Object.keys(MARKET_REGISTRY).join(", ");
 
 const HELP = `
 Tide CLI — manual contract interaction tool
 
 Usage: pnpm cli <command> [args...]
 
-Commands:
-  create-market <feedId> <intervalMs> <minBetMist> <startTimeMs>
-  pause-market  <marketId>
-  resume-market <marketId> <newStartTimeMs>
-  place-bet     <marketId> <direction:0|1> <amountMist>
-  settle        <marketId> <feedId>
-  redeem        <marketId> <ticketId>
-  redeem-all    <marketId> <feedId>
-  update-config <feeBps> <settlerRewardBps> <priceToleranceMs>
-  withdraw      <amountMist>
-  market-info   <marketId>
-  rounds        <marketId> [count]
-  my-tickets    [marketId]
+Markets: ${MARKET_NAMES}
+  Use market name (e.g. SUI_1M) or raw object ID where <market> is expected.
 
-Shortcuts (uses default SUI market):
-  bet-up    <amountMist>       — place UP bet on SUI market
-  bet-down  <amountMist>       — place DOWN bet on SUI market
-  settle-sui                   — settle SUI market
-  redeem-sui     <ticketId>    — redeem single ticket on SUI market
-  redeem-all-sui               — catch up + redeem all SUI market tickets
-  info                         — show SUI market info
-  rounds-sui                   — show recent rounds for SUI market
+Commands:
+  create-market <feedId> <intervalMs> [minBetSui] [startTimeMs]
+                          — minBet defaults to 0.1 SUI; startTime auto-calculated if omitted
+  pause-market  <market>
+  resume-market <market> [newStartTimeMs]
+                          — startTime auto-calculated if omitted
+  place-bet     <market> <direction:up|down> <amountSui>
+  settle        <market>
+  settle-all                    — settle all registered markets
+  redeem        <market> <ticketId>
+  redeem-all    <market>  — catch up + redeem all redeemable tickets
+  update-config <feeBps> <settlerRewardBps> <priceToleranceMs>
+  withdraw      <amountSui>
+  info          [market]  — defaults to SUI_1M
+  rounds        [market] [count]
+  my-tickets    [market]
 `.trim();
 
 async function main() {
@@ -54,112 +53,91 @@ async function main() {
 
   switch (cmd) {
     case "create-market": {
-      const [feedId, intervalMs, minBet, startTimeMs] = args;
-      if (!feedId || !intervalMs || !minBet || !startTimeMs) {
-        console.error("Usage: create-market <feedId> <intervalMs> <minBetMist> <startTimeMs>");
+      const [feedId, intervalMsStr, minBetStr, startTimeStr] = args;
+      if (!feedId || !intervalMsStr) {
+        console.error("Usage: create-market <feedId> <intervalMs> [minBetSui] [startTimeMs]");
         process.exit(1);
       }
-      const tx = buildCreateMarket({
-        pythFeedId: feedId,
-        intervalMs: Number(intervalMs),
-        minBet: Number(minBet),
-        startTimeMs: Number(startTimeMs),
-      });
+      const intervalMs = Number(intervalMsStr);
+      const minBet = minBetStr ? suiToMist(minBetStr) : suiToMist("0.1");
+      const startTimeMs = startTimeStr ? Number(startTimeStr) : nextAlignedStartTime(intervalMs);
+      console.log(`[create-market] startTime=${new Date(startTimeMs).toISOString()} interval=${intervalMs}ms minBet=${minBet} MIST`);
+      const tx = buildCreateMarket({ pythFeedId: feedId, intervalMs, minBet, startTimeMs });
       await execute(tx);
       break;
     }
 
     case "pause-market": {
-      const [marketId] = args;
-      if (!marketId) {
-        console.error("Usage: pause-market <marketId>");
-        process.exit(1);
-      }
-      await execute(buildPauseMarket(marketId));
+      const [market] = args;
+      if (!market) { console.error("Usage: pause-market <market>"); process.exit(1); }
+      await execute(buildPauseMarket(resolveMarket(market).marketId));
       break;
     }
 
     case "resume-market": {
-      const [marketId, startTime] = args;
-      if (!marketId || !startTime) {
-        console.error("Usage: resume-market <marketId> <newStartTimeMs>");
+      const [market, startTimeStr] = args;
+      if (!market) { console.error("Usage: resume-market <market> [newStartTimeMs]"); process.exit(1); }
+      const { marketId } = resolveMarket(market);
+      // Read interval from on-chain state to auto-calculate start time
+      let startTimeMs: number;
+      if (startTimeStr) {
+        startTimeMs = Number(startTimeStr);
+      } else {
+        const data = await getRecentRounds(marketId, 1);
+        const intervalMs = data?.market.intervalMs ?? 300_000;
+        startTimeMs = nextAlignedStartTime(intervalMs);
+      }
+      console.log(`[resume-market] startTime=${new Date(startTimeMs).toISOString()}`);
+      await execute(buildResumeMarket(marketId, startTimeMs));
+      break;
+    }
+
+    case "place-bet":
+    case "bet": {
+      const [market, dirStr, amountStr] = args;
+      if (!market || !dirStr || !amountStr) {
+        console.error("Usage: place-bet <market> <up|down> <amountSui>");
         process.exit(1);
       }
-      await execute(buildResumeMarket(marketId, Number(startTime)));
-      break;
-    }
-
-    case "place-bet": {
-      const [marketId, direction, amount] = args;
-      if (!marketId || direction === undefined || !amount) {
-        console.error("Usage: place-bet <marketId> <direction:0|1> <amountMist>");
-        process.exit(1);
-      }
-      await execute(buildPlaceBet(marketId, Number(direction), Number(amount)));
-      break;
-    }
-
-    case "bet-up": {
-      const [amount] = args;
-      if (!amount) { console.error("Usage: bet-up <amountMist>"); process.exit(1); }
-      await execute(buildPlaceBet(MARKETS.SUI, 0, Number(amount)));
-      break;
-    }
-
-    case "bet-down": {
-      const [amount] = args;
-      if (!amount) { console.error("Usage: bet-down <amountMist>"); process.exit(1); }
-      await execute(buildPlaceBet(MARKETS.SUI, 1, Number(amount)));
+      const direction = dirStr.toLowerCase() === "up" ? 0 : dirStr.toLowerCase() === "down" ? 1 : Number(dirStr);
+      await execute(buildPlaceBet(resolveMarket(market).marketId, direction, suiToMist(amountStr)));
       break;
     }
 
     case "settle": {
-      const [marketId, feedId] = args;
-      if (!marketId || !feedId) {
-        console.error("Usage: settle <marketId> <feedId>");
-        process.exit(1);
-      }
+      const [market] = args;
+      if (!market) { console.error("Usage: settle <market>"); process.exit(1); }
+      const { marketId, feedId } = resolveMarket(market);
+      if (!feedId) { console.error("Must use a named market or provide feedId"); process.exit(1); }
       await catchUpMarket(marketId, feedId);
       break;
     }
 
-    case "settle-sui": {
-      await catchUpMarket(MARKETS.SUI, PYTH_FEED_IDS.SUI_USD);
+    case "settle-all": {
+      for (const [name, { marketId, feedId }] of Object.entries(MARKET_REGISTRY)) {
+        console.log(`\n[settle-all] ${name}`);
+        try {
+          await catchUpMarket(marketId, feedId);
+        } catch (err) {
+          console.error(`[settle-all] ${name} failed:`, (err as Error).message);
+        }
+      }
       break;
     }
 
     case "redeem": {
-      const [marketId, ticketId] = args;
-      if (!marketId || !ticketId) {
-        console.error("Usage: redeem <marketId> <ticketId>");
-        process.exit(1);
-      }
-      await execute(buildRedeem(marketId, ticketId));
-      break;
-    }
-
-    case "redeem-sui": {
-      const [ticketId] = args;
-      if (!ticketId) {
-        console.error("Usage: redeem-sui <ticketId>");
-        process.exit(1);
-      }
-      await execute(buildRedeem(MARKETS.SUI, ticketId));
+      const [market, ticketId] = args;
+      if (!market || !ticketId) { console.error("Usage: redeem <market> <ticketId>"); process.exit(1); }
+      await execute(buildRedeem(resolveMarket(market).marketId, ticketId));
       break;
     }
 
     case "redeem-all": {
-      const [marketId, feedId] = args;
-      if (!marketId || !feedId) {
-        console.error("Usage: redeem-all <marketId> <feedId>");
-        process.exit(1);
-      }
+      const [market] = args;
+      if (!market) { console.error("Usage: redeem-all <market>"); process.exit(1); }
+      const { marketId, feedId } = resolveMarket(market);
+      if (!feedId) { console.error("Must use a named market or provide feedId"); process.exit(1); }
       await redeemAllTickets(marketId, feedId);
-      break;
-    }
-
-    case "redeem-all-sui": {
-      await redeemAllTickets(MARKETS.SUI, PYTH_FEED_IDS.SUI_USD);
       break;
     }
 
@@ -169,49 +147,38 @@ async function main() {
         console.error("Usage: update-config <feeBps> <settlerRewardBps> <priceToleranceMs>");
         process.exit(1);
       }
-      await execute(
-        buildUpdateConfig({
-          feeBps: Number(feeBps),
-          settlerRewardBps: Number(settlerRewardBps),
-          priceToleranceMs: Number(toleranceMs),
-        }),
-      );
+      await execute(buildUpdateConfig({
+        feeBps: Number(feeBps),
+        settlerRewardBps: Number(settlerRewardBps),
+        priceToleranceMs: Number(toleranceMs),
+      }));
       break;
     }
 
     case "withdraw": {
-      const [amount] = args;
-      if (!amount) { console.error("Usage: withdraw <amountMist>"); process.exit(1); }
-      await execute(buildWithdrawTreasury(Number(amount), address));
+      const [amountStr] = args;
+      if (!amountStr) { console.error("Usage: withdraw <amountSui>"); process.exit(1); }
+      await execute(buildWithdrawTreasury(suiToMist(amountStr), address));
       break;
     }
 
     case "market-info":
     case "info": {
-      const marketId = args[0] ?? MARKETS.SUI;
+      const marketId = args[0] ? resolveMarket(args[0]).marketId : resolveMarket("SUI_1M").marketId;
       const obj = await getMarketObject(marketId);
       console.log(JSON.stringify(obj.data?.content, null, 2));
       break;
     }
 
     case "rounds": {
-      const [marketId, countStr] = args;
-      if (!marketId) {
-        console.error("Usage: rounds <marketId> [count]");
-        process.exit(1);
-      }
-      await printRounds(marketId, Number(countStr) || 5);
-      break;
-    }
-
-    case "rounds-sui": {
-      const count = Number(args[0]) || 5;
-      await printRounds(MARKETS.SUI, count);
+      const market = args[0] ?? "SUI_1M";
+      const count = Number(args[1]) || 5;
+      await printRounds(resolveMarket(market).marketId, count);
       break;
     }
 
     case "my-tickets": {
-      const marketId = args[0];
+      const marketId = args[0] ? resolveMarket(args[0]).marketId : undefined;
       await listTickets(address, marketId);
       break;
     }
@@ -296,13 +263,37 @@ async function redeemAllTickets(marketId: string, feedId: string) {
     return;
   }
 
-  console.log(`[redeem-all] found ${tickets.length} ticket(s), redeeming...`);
+  // Step 3: read market state to find which rounds are redeemable (SETTLED or CANCELLED)
+  const marketState = await getMarketState(marketId);
+  const roundCount = marketState?.roundCount ?? 100;
+  const data = await getRecentRounds(marketId, roundCount);
+  const redeemableRounds = new Set<number>();
+  if (data) {
+    for (const r of data.rounds) {
+      if (r.status === 2 /* SETTLED */ || r.status === 3 /* CANCELLED */) {
+        redeemableRounds.add(r.roundNumber);
+      }
+    }
+  }
 
-  const ticketIds = tickets.map((t) => t.objectId);
+  const redeemable = tickets.filter((t) => redeemableRounds.has(t.roundNumber));
+  const skipped = tickets.length - redeemable.length;
+
+  if (redeemable.length === 0) {
+    console.log(`[redeem-all] no redeemable tickets (${skipped} in LIVE/UPCOMING rounds).`);
+    return;
+  }
+
+  if (skipped > 0) {
+    console.log(`[redeem-all] skipping ${skipped} ticket(s) in LIVE/UPCOMING rounds.`);
+  }
+
+  console.log(`[redeem-all] redeeming ${redeemable.length} ticket(s)...`);
+  const ticketIds = redeemable.map((t) => t.objectId);
   const tx = buildRedeemAll(marketId, ticketIds);
   await execute(tx);
 
-  console.log(`[redeem-all] redeemed ${tickets.length} ticket(s) successfully.`);
+  console.log(`[redeem-all] redeemed ${redeemable.length} ticket(s) successfully.`);
 }
 
 // === Display helpers ===
