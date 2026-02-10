@@ -1,0 +1,5 @@
+node_modules
+dist
+.env
+ai-sessions
+*.md

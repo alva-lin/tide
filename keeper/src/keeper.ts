@@ -1,6 +1,7 @@
 import { getMarketSnapshot } from "./market.js";
 import { catchUpMarket } from "./catchUp.js";
 import { MARKET_REGISTRY } from "./config.js";
+import { startMetricsServer, type MetricsSource } from "./server.js";
 
 interface MarketConfig {
   name: string;
@@ -201,6 +202,19 @@ function startKeeper() {
 
   console.log(
     `[keeper] started — ${runners.length} market(s): ${markets.map((m) => m.name).join(", ")}`,
+  );
+
+  // Health check / metrics HTTP endpoint
+  const metricsPort = Number(process.env.METRICS_PORT) || 9090;
+  startMetricsServer(
+    () =>
+      runners.map((r): MetricsSource => ({
+        name: r.config.name,
+        settling: r.settling,
+        hasTimer: r.timer !== null,
+        metrics: r.metrics,
+      })),
+    metricsPort,
   );
 
   for (const runner of runners) {
