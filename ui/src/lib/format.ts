@@ -18,9 +18,7 @@ export function formatPrice(
   // Pyth stores expo as negative (e.g. -8), but on-chain it's stored as u8
   // so gRPC JSON gives us "8" meaning 10^(-8)
   const price = Number(magnitude) * Math.pow(10, -Number(expo));
-  if (price >= 1000) return price.toFixed(2);
-  if (price >= 1) return price.toFixed(4);
-  return price.toFixed(6);
+  return price.toFixed(4);
 }
 
 export function formatCountdown(ms: number): string {

@@ -1,5 +1,5 @@
 import { useCurrentClient } from "@mysten/dapp-kit-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import type { RoundData } from "../lib/types";
 import { u64BcsName } from "./useMarket";
 
@@ -76,6 +76,7 @@ export function useRound(tableId: string | undefined, roundNumber: number) {
     },
     enabled: !!tableId && roundNumber > 0,
     refetchInterval: 5_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -103,5 +104,6 @@ export function useRounds(
     },
     enabled: !!tableId && roundNumbers.length > 0,
     refetchInterval: 10_000,
+    placeholderData: keepPreviousData,
   });
 }

@@ -1,5 +1,5 @@
 import { useCurrentClient } from "@mysten/dapp-kit-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { bcs } from "@mysten/sui/bcs";
 import type { MarketState } from "../lib/types";
 
@@ -36,6 +36,7 @@ export function useMarket(marketId: string) {
       };
     },
     refetchInterval: 5_000,
+    placeholderData: keepPreviousData,
   });
 }
 

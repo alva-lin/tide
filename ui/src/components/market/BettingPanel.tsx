@@ -19,7 +19,7 @@ export function BettingPanel({ marketId }: { marketId: string }) {
   const account = useCurrentAccount();
   const dAppKit = useDAppKit();
   const { data: market } = useMarket(marketId);
-  const { data: upcomingRound } = useRound(
+  const { data: upcomingRound, isPlaceholderData } = useRound(
     market?.tableId,
     market?.upcomingRound ?? 0,
   );
@@ -32,6 +32,11 @@ export function BettingPanel({ marketId }: { marketId: string }) {
   const startTimeMs = upcomingRound?.startTimeMs ?? 0;
   const remaining = useCountdown(startTimeMs);
 
+  // Round is settling: upcoming round has become LIVE, or data is stale
+  const isSettling =
+    isPlaceholderData ||
+    (upcomingRound != null && upcomingRound.status !== ROUND_UPCOMING);
+
   if (!account) {
     return (
       <div className="border p-6 text-center text-sm text-muted-foreground">
@@ -40,15 +45,52 @@ export function BettingPanel({ marketId }: { marketId: string }) {
     );
   }
 
-  if (!upcomingRound || upcomingRound.status !== ROUND_UPCOMING) {
+  // We know the round number but data hasn't loaded — show skeleton
+  if (!upcomingRound && market && market.upcomingRound > 0) {
+    return (
+      <div className="border p-4 space-y-4 opacity-50">
+        {/* header */}
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+          <span className="text-sm font-medium">
+            NEXT &middot; Round #{market.upcomingRound}
+          </span>
+        </div>
+        {/* up/down pool row */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="border p-2 h-8 animate-pulse bg-muted/30 rounded" />
+          <div className="border p-2 h-8 animate-pulse bg-muted/30 rounded" />
+        </div>
+        {/* preset buttons */}
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            {PRESETS.map((p) => (
+              <div key={p} className="flex-1 border py-1.5 h-9 animate-pulse bg-muted/30 rounded" />
+            ))}
+          </div>
+          {/* input */}
+          <div className="h-10 animate-pulse rounded bg-muted/30 border" />
+        </div>
+        {/* up/down buttons */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="border py-3 h-12 animate-pulse bg-muted/30 rounded" />
+          <div className="border py-3 h-12 animate-pulse bg-muted/30 rounded" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!upcomingRound) {
     return (
       <div className="border p-6 text-center text-sm text-muted-foreground">
-        No upcoming round available
+        <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
+        Waiting for next round...
       </div>
     );
   }
 
   const handleBet = async (direction: number) => {
+    if (isSettling) return;
     setError(null);
     const mist = suiToMist(amount);
     if (mist <= 0) {
@@ -75,15 +117,26 @@ export function BettingPanel({ marketId }: { marketId: string }) {
     }
   };
 
+  const betDisabled = txPending || isSettling;
+
   return (
-    <div className="border p-4 space-y-4">
+    <div className={cn("border p-4 space-y-4 transition-opacity duration-300", isSettling && "opacity-50")}>
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">
-          NEXT &middot; Round #{upcomingRound.roundNumber}
+          {isSettling ? (
+            <>
+              <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />
+              Settling...
+            </>
+          ) : (
+            <>NEXT &middot; Round #{upcomingRound.roundNumber}</>
+          )}
         </span>
-        <span className="font-mono text-sm tabular-nums text-muted-foreground">
-          starts in {formatCountdown(remaining)}
-        </span>
+        {!isSettling && (
+          <span className="font-mono text-sm tabular-nums text-muted-foreground">
+            starts in {formatCountdown(remaining)}
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
@@ -103,8 +156,9 @@ export function BettingPanel({ marketId }: { marketId: string }) {
             <button
               key={p}
               onClick={() => setAmount(p)}
+              disabled={isSettling}
               className={cn(
-                "flex-1 border py-1.5 text-sm transition-colors",
+                "flex-1 border py-1.5 text-sm transition-colors disabled:opacity-50",
                 amount === p
                   ? "bg-foreground text-background"
                   : "text-muted-foreground hover:text-foreground",
@@ -120,8 +174,9 @@ export function BettingPanel({ marketId }: { marketId: string }) {
             min="0.01"
             step="0.01"
             value={amount}
+            disabled={isSettling}
             onChange={(e) => setAmount(e.target.value)}
-            className="flex-1 border bg-transparent px-3 py-2 text-sm font-mono tabular-nums outline-none focus:ring-1 focus:ring-foreground"
+            className="flex-1 border bg-transparent px-3 py-2 text-sm font-mono tabular-nums outline-none focus:ring-1 focus:ring-foreground disabled:opacity-50"
           />
           <span className="text-sm text-muted-foreground">SUI</span>
         </div>
@@ -129,7 +184,7 @@ export function BettingPanel({ marketId }: { marketId: string }) {
 
       <div className="grid grid-cols-2 gap-3">
         <button
-          disabled={txPending}
+          disabled={betDisabled}
           onClick={() => handleBet(DIRECTION_UP)}
           className="flex items-center justify-center gap-1 border border-up py-3 text-sm font-medium text-up transition-colors hover:bg-up hover:text-background disabled:opacity-50"
         >
@@ -141,7 +196,7 @@ export function BettingPanel({ marketId }: { marketId: string }) {
           UP
         </button>
         <button
-          disabled={txPending}
+          disabled={betDisabled}
           onClick={() => handleBet(DIRECTION_DOWN)}
           className="flex items-center justify-center gap-1 border border-down py-3 text-sm font-medium text-down transition-colors hover:bg-down hover:text-background disabled:opacity-50"
         >
