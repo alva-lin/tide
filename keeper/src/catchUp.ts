@@ -53,19 +53,9 @@ export async function catchUpMarket(
   if (!snapshot) return result;
   const { state } = snapshot;
 
-  // If market is paused (e.g. previous resume failed), try to resume
+  // If market is paused, skip — do not attempt automatic resume.
   if (state.status !== 0) {
-    console.log(`[catch-up] market is paused (status=${state.status}), attempting resume...`);
-    try {
-      const newStartTimeMs = alignToNextInterval(Date.now(), state.intervalMs);
-      await execute(buildResumeMarket(marketId, newStartTimeMs));
-      console.log(`[catch-up] market resumed, next round at ${new Date(newStartTimeMs).toLocaleTimeString()}`);
-      result.didReset = true;
-    } catch (err) {
-      result.failCount++;
-      result.lastError = err instanceof Error ? err.message : String(err);
-      console.error("[catch-up] resume failed:", result.lastError);
-    }
+    console.log(`[catch-up] market is paused (status=${state.status}), skipping`);
     return result;
   }
 

@@ -138,8 +138,7 @@ async function scheduleNext(runner: MarketRunner): Promise<void> {
     }
 
     if (snapshot.state.status !== 0) {
-      console.log(`[keeper] ${runner.config.name} market is paused, enqueuing for recovery`);
-      enqueueSettle(runner);
+      console.log(`[keeper] ${runner.config.name} market is paused, skipping (will re-check on heartbeat)`);
       return;
     }
 
