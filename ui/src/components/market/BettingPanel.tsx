@@ -1,9 +1,10 @@
 import { useState } from "react";
 import {
   useCurrentAccount,
+  useCurrentClient,
   useDAppKit,
 } from "@mysten/dapp-kit-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMarket } from "../../hooks/useMarket";
 import { useRound } from "../../hooks/useRound";
 import { buildPlaceBet } from "../../tx/placeBet";
@@ -25,6 +26,7 @@ function calcOdds(upAmount: number, downAmount: number) {
 
 export function BettingPanel({ marketId }: { marketId: string }) {
   const account = useCurrentAccount();
+  const client = useCurrentClient();
   const dAppKit = useDAppKit();
   const { data: market } = useMarket(marketId);
   const { data: upcomingRound, isPlaceholderData } = useRound(
@@ -33,7 +35,18 @@ export function BettingPanel({ marketId }: { marketId: string }) {
   );
   const queryClient = useQueryClient();
 
-  const [amount, setAmount] = useState("0.5");
+  const { data: balanceMist } = useQuery({
+    queryKey: ["suiBalance", account?.address],
+    queryFn: async () => {
+      if (!account) return 0;
+      const resp = await client.core.getBalance({ owner: account.address });
+      return Number(resp.balance.coinBalance);
+    },
+    enabled: !!account,
+    refetchInterval: 10_000,
+  });
+
+  const [amount, setAmount] = useState("1");
   const [error, setError] = useState<string | null>(null);
   const [txPending, setTxPending] = useState(false);
   const [betSuccess, setBetSuccess] = useState(false);
@@ -120,6 +133,7 @@ export function BettingPanel({ marketId }: { marketId: string }) {
       queryClient.invalidateQueries({ queryKey: ["tickets"] });
       queryClient.invalidateQueries({ queryKey: ["round"] });
       queryClient.invalidateQueries({ queryKey: ["market"] });
+      queryClient.invalidateQueries({ queryKey: ["suiBalance"] });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Transaction failed");
     } finally {
@@ -204,9 +218,14 @@ export function BettingPanel({ marketId }: { marketId: string }) {
             <button
               key={pct}
               onClick={() => {
-                // TODO: replace with actual wallet balance * pct / 100
-                const defaults: Record<number, string> = { 10: "0.1", 25: "0.5", 50: "1", 100: "5" };
-                setAmount(defaults[pct] ?? "1");
+                const bal = balanceMist ?? 0;
+                if (bal <= 0) return;
+                // Reserve 0.05 SUI for gas when using 100%
+                const reserve = pct === 100 ? 50_000_000 : 0;
+                const raw = Math.max(0, Math.floor((bal * pct) / 100) - reserve);
+                if (raw <= 0) return;
+                const sui = raw / 1_000_000_000;
+                setAmount(sui >= 1 ? sui.toFixed(2) : sui.toFixed(4).replace(/0+$/, "").replace(/\.$/, ""));
               }}
               disabled={isSettling}
               className="flex-1 rounded border py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground hover:bg-secondary disabled:opacity-50"
