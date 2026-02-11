@@ -83,15 +83,20 @@ price_timestamp <= upcoming.start_time + price_tolerance_ms
 
 ### 3.3 Keeper 实现
 
-TypeScript 定时脚本（官方兜底 bot），核心职责：
+TypeScript 自动化服务（官方兜底 bot），核心职责：
 
-**结算（Phase 1）：**
-1. 定时检查（每轮结束时触发）
-2. 从 Pyth Hermes 拉取 **round_end_time 之后最近的价格**（`/v2/updates/price/{round_end_timestamp}`）
-3. 构建交易：`pyth.updatePriceFeeds()` + `settle_and_advance()`
-4. 签名提交
-5. 可在单个 PTB 中批量结算所有市场
+**架构：**
+- 每个市场独立 runner，维护各自的定时器和结算队列
+- 结算队列串行执行，避免 gas coin 并发争用
+- 心跳循环（10s）作为安全网，补捕丢失的定时器
+- 健康检查端口（9090）暴露运行指标
 
-**链下索引（Phase 2）：**
-- 监听 `BetPlaced` / `Redeemed` 事件，聚合用户统计数据（胜场、总投注、总赢取等）
-- 提供排行榜 API 供前端查询
+**结算流程：**
+1. 轮次到期时触发 catchUp 逻辑
+2. 检查 upcoming round 的 start_time 与当前时间的关系：
+   - 未到时间 → 跳过，等待心跳重新调度
+   - 在容差窗口内 → 正常结算
+   - 超出容差窗口 → 轮次不可结算，自动 pause + resume 市场恢复
+3. 从 Pyth Hermes 拉取对应时间戳的价格（`GET /v2/updates/price/{publish_time}`）
+4. 构建交易：`pyth.updatePriceFeeds()` + `settle_and_advance()`
+5. 签名提交，成功后检查是否需要继续追赶（连续结算多轮）

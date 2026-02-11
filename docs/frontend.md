@@ -67,7 +67,7 @@ Ticket 为用户持有的 owned object，已 redeem 的 Ticket 会被销毁。�
 
 用户感知为"领取奖金"，失败 Ticket 的清理是搭便车行为，一次 gas 完成。
 
-### 1.3 排行榜页
+### 1.3 排行榜页（未实现）
 
 - 按市场筛选
 - 排序维度切换（胜率、净盈亏、参与场次）
@@ -122,17 +122,19 @@ Ticket 为用户持有的 owned object，已 redeem 的 Ticket 会被销毁。�
 
 ---
 
-## 4. 排行榜数据
+## 4. 排行榜数据（未实现）
 
-采用 **Keeper 链下索引**方案：
+规划采用 **Keeper 链下索引**方案：
 
 - Keeper 在结算之余监听 `BetPlaced` 和 `Redeemed` 事件，聚合每个用户的统计数据（胜场、总投注、总赢取等）
 - 排行榜 Top N 排序由 Keeper 索引服务计算并提供 API
-- MVP 阶段可用前端直接查询事件并本地聚合，Phase 2 由 Keeper 统一处理
 
 ---
 
 ## 5. 技术实现
 
-- 已有基础：React 19 + Sui dApp Kit + Tailwind CSS 4
-- 需增加：钱包连接、交易构建与签名、Pyth 价格订阅、实时倒计时
+- React 19 + TypeScript + Tailwind CSS 4 + Sui dApp Kit（钱包连接）
+- TanStack React Query（RPC 数据缓存）
+- Lightweight Charts（TradingView K线图）
+- Nanostores（轻量状态管理）
+- Pyth 实时价格订阅 + 倒计时 hooks
