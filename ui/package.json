@@ -14,6 +14,7 @@
     "@nanostores/react": "^1.0.0",
     "@tanstack/react-query": "^5.90.16",
     "clsx": "^2.1.1",
+    "lightweight-charts": "^5.1.0",
     "lucide-react": "^0.562.0",
     "motion": "^12.34.0",
     "nanostores": "^1.1.0",

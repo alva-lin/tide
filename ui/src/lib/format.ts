@@ -1,9 +1,10 @@
 const MIST_PER_SUI = 1_000_000_000;
 
 export function mistToSui(mist: number): string {
+  if (mist === 0) return "0";
   const sui = mist / MIST_PER_SUI;
   if (sui >= 1000) return sui.toFixed(0);
-  return sui.toFixed(4);
+  return sui.toFixed(2);
 }
 
 export function suiToMist(sui: string): number {
@@ -19,6 +20,14 @@ export function formatPrice(
   // so gRPC JSON gives us "8" meaning 10^(-8)
   const price = Number(magnitude) * Math.pow(10, -Number(expo));
   return price.toFixed(4);
+}
+
+export function parsePrice(
+  magnitude: string | null,
+  expo: string | null,
+): number | null {
+  if (magnitude === null || expo === null) return null;
+  return Number(magnitude) * Math.pow(10, -Number(expo));
 }
 
 export function formatCountdown(ms: number): string {

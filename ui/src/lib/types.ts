@@ -52,3 +52,30 @@ export interface TicketData {
   direction: number;
   amount: number;
 }
+
+// Activity history events
+export interface ActivityBet {
+  type: "bet";
+  marketId: string;
+  roundNumber: number;
+  direction: number;
+  amount: number;
+  timestamp: number;
+}
+
+export interface ActivityRedeem {
+  type: "redeem";
+  marketId: string;
+  roundNumber: number;
+  outcome: number; // 0=WIN, 1=LOSE, 2=CANCEL
+  betAmount: number;
+  payout: number;
+  timestamp: number;
+}
+
+export type ActivityEvent = ActivityBet | ActivityRedeem;
+
+// Redeem outcomes
+export const REDEEM_WIN = 0;
+export const REDEEM_LOSE = 1;
+export const REDEEM_CANCEL = 2;
