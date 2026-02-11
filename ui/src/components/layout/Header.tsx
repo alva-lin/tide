@@ -12,6 +12,9 @@ export function Header() {
         <div className="flex items-center gap-2">
           <img src="/icon.png" alt="Tide" className="h-7 w-7" />
           <span className="text-lg font-bold tracking-tight">Tide</span>
+          <span className="rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-xs font-bold tracking-wide text-amber-500">
+            TESTNET
+          </span>
         </div>
         <div className="flex items-center gap-3">
           <button

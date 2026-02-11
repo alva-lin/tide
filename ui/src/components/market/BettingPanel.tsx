@@ -266,6 +266,11 @@ export function BettingPanel({ marketId }: { marketId: string }) {
         </button>
       </div>
 
+      {/* Testnet warning */}
+      <p className="text-center text-xs font-medium text-amber-500">
+        Testnet only — tokens have no real value
+      </p>
+
       {/* Bet success toast */}
       {betSuccess && (
         <div className="flex items-center gap-2 rounded border border-up/30 bg-up/10 px-3 py-2 text-xs text-up">
